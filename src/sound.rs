@@ -8,7 +8,7 @@ mod oscillator;
 
 pub use crate::sound::effector::modulator::{Envelope, Modulator};
 use crate::sound::effector::{Effector, HpFilter, LpFilter, modulator::LFO};
-use crate::sound::oscillator::{Oscillator, SineOscillator};
+use crate::sound::oscillator::{Oscillator, SawOscillator, SineOscillator, SquareOscillator};
 
 
 impl rodio::source::Source for AudioGenerator {
@@ -37,7 +37,6 @@ impl Iterator for AudioGenerator {
         self.time += 1.0 / 44100.0;
         let env = self.envelope.lock().unwrap().get_mod(self.time)?;
         let mut next = self.oscillator.get_wave(self.time);
-        next = next.clamp(-0.05, 0.05);
 
         next *= env;
         next = self.effector.effect(next, self.time);
@@ -64,10 +63,17 @@ pub fn play_note(handle: &mut MixerDeviceSink, frequency: f64) -> Arc<Mutex<Enve
 
     let source = AudioGenerator {
         time: 0.,
-        oscillator: Box::new(SineOscillator::new(frequency)),
+        oscillator: Box::new(SawOscillator::new(frequency)),
+        effector: Box::new(LpFilter::new(Box::new(Envelope::new(0.5, 1., 0.3, 1.)), None)),
+        envelope: envelope.clone(),
+    };
+    let source2 = AudioGenerator {
+        time: 0.,
+        oscillator: Box::new(SawOscillator::new(frequency + 2.)),
         effector: Box::new(LpFilter::new(Box::new(Envelope::new(0.5, 1., 0.3, 1.)), None)),
         envelope: envelope.clone(),
     };
     handle.mixer().add(source);
+    handle.mixer().add(source2);
     return envelope;
 }
