@@ -2,14 +2,6 @@
 pub trait Modulator: Send{
     fn get_mod(&mut self, time: f64) -> Option<f64>;
 }
-impl Modulator for LFO{
-    fn get_mod(&mut self, time: f64) -> Option<f64>{
-        return Some(((time * self.freq).sin() + 1.)/2.);
-    }
-}
-pub struct LFO{
-    freq: f64
-}
 impl Envelope {
     pub fn new(attack: f64, decay: f64, sustain: f64, release: f64) -> Self{
         Self{ attack, decay, sustain, release, state: 0.0, sustained: true}
@@ -44,6 +36,15 @@ pub struct Envelope {
     release: f64,
     state: f64,
     pub sustained: bool,
+}
+
+impl Modulator for LFO{
+    fn get_mod(&mut self, time: f64) -> Option<f64>{
+        return Some(((time * self.freq).sin() + 1.)/2.);
+    }
+}
+pub struct LFO{
+    freq: f64
 }
 
 impl LFO {
