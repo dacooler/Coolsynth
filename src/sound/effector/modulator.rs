@@ -14,7 +14,7 @@ impl Modulator for Envelope {
                 self.state = time / self.attack;
                 return Some(self.state);
             }
-            if time <= self.attack + self.decay {
+            else if time <= self.attack + self.decay {
                 self.state = 1.0 - ((time - self.attack) / (self.decay + self.sustain));
                 return Some(self.state);
             }
@@ -50,5 +50,23 @@ pub struct LFO{
 impl LFO {
     pub fn new(freq: f64) -> Self{
         Self{ freq}
+    }
+}
+
+impl Attenuator{
+    pub fn new(modulator: Box<dyn Modulator>, strength: f64, offset: f64) -> Self{
+        Self{ modulator, strength, offset }
+    }
+}
+
+pub struct Attenuator{
+    modulator: Box<dyn Modulator>,
+    strength: f64,
+    offset: f64,
+}
+
+impl Modulator for Attenuator{
+    fn get_mod(&mut self, time: f64) -> Option<f64> {
+        return Some(self.modulator.get_mod(time)? * self.strength + self.offset);
     }
 }
