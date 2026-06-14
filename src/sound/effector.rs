@@ -1,4 +1,6 @@
-use std::f64::consts::PI;
+use std::{collections::VecDeque, f64::consts::PI};
+
+use eframe::egui::Key::L;
 
 use crate::sound::effector::modulator::Modulator;
 
@@ -14,9 +16,9 @@ impl Effector for LpFilter {
             None => return 0.,
             Some(freq) => {
                 //let mut out = alpha * input + (1. - alpha) * self.state;
-                let resonance = 0.01;
+                let q = 1. / self.resonance;
                 let w0: f64 = 2.*PI*(freq/44100.);
-                let alpha = w0.sin() / 2. * resonance;
+                let alpha = w0.sin() / 2. * q;
                 let b0 = (1.0 - w0.cos())/2.;
                 let b1 = 1.0 - w0.cos();
                 let b2 = b0;
@@ -58,8 +60,8 @@ impl Effector for HpFilter {
     }
 }
 impl LpFilter {
-    pub fn new(frequency: Box<dyn Modulator>, next: Option<Box<dyn Effector>>) -> Self{
-        Self{ frequency, next, state: vec![0.0, 0.0, 0.0], state2: vec![0.0, 0.0, 0.0] }
+    pub fn new(frequency: Box<dyn Modulator>, resonance: f64, next: Option<Box<dyn Effector>>) -> Self{
+        Self{ frequency, resonance, next, state: vec![0.0, 0.0, 0.0], state2: vec![0.0, 0.0, 0.0] }
     }
 }
 impl HpFilter {
@@ -74,7 +76,48 @@ pub struct HpFilter {
 }
 pub struct LpFilter {
     frequency: Box<dyn Modulator>,
+    resonance: f64,
     next: Option<Box<dyn Effector>>,
     state: Vec<f64>,
     state2: Vec<f64>,
+}
+pub struct Delay {
+    time: Box<dyn Modulator>,
+    feedback: f64,
+    next: Option<Box<dyn Effector>>,
+    bbd: VecDeque<f64>,
+}
+impl Delay {
+    pub fn new(time: Box<dyn Modulator>, feedback: f64, next: Option<Box<dyn Effector>>) -> Self{
+        Self{ time, feedback, next, bbd: VecDeque::new() }
+    }
+}
+
+impl Effector for Delay{
+    fn effect(&mut self, input: f64, time: f64) -> f64 {
+       let delay_time = self.time.get_mod(time); 
+       match delay_time{
+        None => return 0.,
+        Some(delay) =>
+        {
+            let out;
+            let steps = delay as usize;
+            self.bbd.push_front(input);
+            if steps > self.bbd.len(){
+                out = 0.0 + input;
+            }
+            else{
+                out = Option::expect(self.bbd.pop_back(), "whoops") + input;
+                match self.bbd.front_mut(){
+                    None => {},
+                    Some(value) => {*value += out * self.feedback},
+                }
+            }
+            match &mut self.next{
+                Some(effector) => return effector.effect(out, time),
+                None => return out 
+            }
+        },
+       }
+    }
 }

@@ -70,3 +70,19 @@ impl Modulator for Attenuator{
         return Some(self.modulator.get_mod(time)? * self.strength + self.offset);
     }
 }
+
+pub struct Static{
+    value: f64,
+}
+
+impl Modulator for Static{
+    fn get_mod(&mut self, time: f64) -> Option<f64> {
+        return Some(self.value);
+    }
+}
+
+impl Static{
+    pub fn new(value: f64) -> Self{
+        Self{ value }
+    }
+}

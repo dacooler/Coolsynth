@@ -7,20 +7,24 @@ use eframe::{egui, wgpu::naga::compact::KeepUnused::No};
 use egui::{Key, ScrollArea};
 mod sound;
 use rodio::{MixerDeviceSink, Player, mixer::Mixer};
-use sound::play_note;
+use sound::{play_note, MasterAudio};
 
-use crate::sound::Envelope;
+use crate::sound::{AudioGenerator, Envelope};
 
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions::default();
     let handle = rodio::DeviceSinkBuilder::open_default_sink().expect("open default audio stream");
+    let master_audio = MasterAudio::new(); 
+    let sources = master_audio.sources.clone();
+    
+    handle.mixer().add(master_audio);
     eframe::run_native(
         "Keyboard events",
         options,
         Box::new(|_cc| {
             Ok(Box::new(Content {
                 text: "".to_string(),
-                handle: handle,
+                sources: sources,
                 envelopes: vec![None, None, None, None, None, None, None],
             }))
         }),
@@ -29,7 +33,7 @@ fn main() -> eframe::Result {
 
 struct Content {
     text: String,
-    handle: MixerDeviceSink,
+    sources: Arc<Mutex<Vec<AudioGenerator>>>,
     envelopes: Vec<Option<Arc<Mutex<Envelope>>>>,
 }
 
@@ -58,7 +62,7 @@ impl eframe::App for Content {
             for (index, (key, freq)) in keys.iter().enumerate(){
                 if ui.input(|i| i.key_pressed(Key::from_name(key).unwrap())) {
                     if self.envelopes[index].is_none() {
-                        self.envelopes[index] = Some(play_note(&mut self.handle, *freq));
+                        self.envelopes[index] = Some(play_note(self.sources.clone(), *freq));
                     }
                 }
                 if ui.input(|i| i.key_released(Key::from_name(key).unwrap())) && let Some(envelope) = &self.envelopes[index] {
