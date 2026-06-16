@@ -7,9 +7,11 @@ use rodio::{MixerDeviceSink, Player};
 mod effector;
 mod oscillator;
 
+use crate::sound::effector::Stereo;
 pub use crate::sound::effector::modulator::{Static, Envelope, Modulator, Attenuator};
 use crate::sound::effector::{Effector, HpFilter, LpFilter, modulator::LFO, Delay};
 use crate::sound::oscillator::{Oscillator, SawOscillator, SineOscillator, SquareOscillator};
+use crate::sound::effector::audio::Audio;
 
 
 impl rodio::source::Source for MasterAudio {
@@ -18,7 +20,7 @@ impl rodio::source::Source for MasterAudio {
     }
 
     fn channels(&self) -> rodio::ChannelCount {
-        ChannelCount::new(1).unwrap()
+        ChannelCount::new(2).unwrap()
     }
 
     fn sample_rate(&self) -> rodio::SampleRate {
@@ -32,13 +34,13 @@ impl rodio::source::Source for MasterAudio {
 
 
 impl Iterator for AudioGenerator {
-    type Item = f64;
+    type Item = Audio;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.time += 1.0 / 44100.0;
         let env = self.envelope.lock().unwrap().get_mod(self.time)?;
         let mut next = self.oscillator.get_wave(self.time);
-        next *= env;
+        next = next * env;
         next = self.effector.effect(next, self.time);
         return Some(next);
 
@@ -49,18 +51,34 @@ pub struct AudioGenerator {
     oscillator: Box<dyn Oscillator>,
     envelope: Arc<Mutex<Envelope>>,
     effector: Box<dyn Effector>
-
 }
 
 pub struct MasterAudio{
     pub sources: Arc<Mutex<Vec<AudioGenerator>>>,
     effector: Box<dyn Effector>,
     time: f64,
+    cur_sample: Audio,
+    done: bool,
 }
 
 impl MasterAudio{
     pub fn new() -> Self{
-        Self{ sources: Arc::new(Mutex::new(Vec::new())), effector: Box::new(Delay::new(Box::new(Static::new(12000.0)), 0.2, None)), time: 0.0 }
+        Self{ 
+            sources: Arc::new(Mutex::new(Vec::new())),
+            /* 
+            effector: Box::new(Stereo::new(
+                Box::new(Delay::new(Box::new(Attenuator::new(Box::new(LFO::new(10.0)), 200., 200.)), 0.2, None)), 
+                Box::new(Delay::new(Box::new(Attenuator::new(Box::new(LFO::new(8.0)), 200., 200.)), 0.2, None))
+            )), 
+            */
+            effector: Box::new(Stereo::new(
+                Box::new(Delay::new(Box::new(Static::new(5500.0)), 0.8, None)), 
+                Box::new(Delay::new(Box::new(Static::new(5000.0)), 0.8, None))
+            )), 
+            time: 0.0, 
+            cur_sample: Audio::new_m(0.0), 
+            done:true 
+        }
     }
 }
 
@@ -69,16 +87,22 @@ impl MasterAudio{
 impl Iterator for MasterAudio {
     type Item = Float;
     fn next(&mut self) -> Option<Self::Item> {
-        let mut out = 0.0;
-        self.time += 1./44100.0;
-        self.sources.lock().unwrap().retain(|x| x.envelope.lock().unwrap().get_mod(x.time + 1. / 44100.0).is_some());
-        for source in self.sources.lock().unwrap().iter_mut(){
-            match source.next(){
-                None => out += 0.0,
-                Some(value) => out += value,
-            }
-        };
-        return Some(self.effector.effect(out, self.time) as f32);
+        if self.done {
+            let mut out = Audio::new_m(0.0);
+            self.time += 1./44100.0;
+            self.sources.lock().unwrap().retain(|x| x.envelope.lock().unwrap().get_mod(x.time + 1. / 44100.0).is_some());
+            for source in self.sources.lock().unwrap().iter_mut(){
+                match source.next(){
+                    None => {},
+                    Some(value) => out = out + value,
+                }
+            };
+            self.cur_sample = self.effector.effect(out, self.time);
+            self.done = false;
+            return Some(self.cur_sample.left as f32);
+        }
+            self.done = true;
+            return Some(self.cur_sample.right as f32);
     }
 }
 
@@ -93,6 +117,8 @@ pub fn play_note(mut sources: Arc<Mutex<Vec<AudioGenerator>>>, frequency: f64) -
 
     let envelope = Arc::new(Mutex::new(envelope));
 
+    //let source = AudioGenerator { time: 0., oscillator: Box::new(SawOscillator::new(frequency)), envelope:envelope.clone(), effector: Box::new(HpFilter::new(Box::new(Static::new(0.)), None))};
+
     let source = AudioGenerator {
         time: 0.,
         oscillator: Box::new(SawOscillator::new(frequency)),
@@ -102,7 +128,7 @@ pub fn play_note(mut sources: Arc<Mutex<Vec<AudioGenerator>>>, frequency: f64) -
                     Box::new(Envelope::new(
                         1.1, 0.2, 0.30, 0.2
                     )), 
-                    3000., 0.0,
+                    3000., 200.0,
                 )), 
                 10.0, None,
             )),

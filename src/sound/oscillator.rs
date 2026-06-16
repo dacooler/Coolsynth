@@ -1,12 +1,13 @@
 use std::f64::consts::TAU;
+use crate::sound::effector::audio::Audio;
 
 pub trait Oscillator: Send{
-    fn get_wave(&self, time: f64) -> f64;
+    fn get_wave(&self, time: f64) -> Audio;
 }
 
 impl Oscillator for SineOscillator{
-    fn get_wave(&self, time: f64) -> f64{
-        return (TAU*time*self.freq).sin();
+    fn get_wave(&self, time: f64) -> Audio{
+        return Audio::new_m((TAU*time*self.freq).sin());
     }
 }
 impl SineOscillator{
@@ -19,12 +20,12 @@ pub struct SineOscillator{
 }
 
 impl Oscillator for SquareOscillator{
-    fn get_wave(&self, time: f64) -> f64{
+    fn get_wave(&self, time: f64) -> Audio{
         if ((time*self.freq) % 1.) > 0.5 {
-            return -0.1;
+            return Audio::new_m(-0.1);
         }
         else{
-            return 0.1;
+            return Audio::new_m(0.1);
         }
     }
 }
@@ -39,8 +40,8 @@ pub struct SquareOscillator{
 
 
 impl Oscillator for SawOscillator{
-    fn get_wave(&self, time: f64) -> f64{
-        return ((time*self.freq % 2.) -1.)/10.
+    fn get_wave(&self, time: f64) -> Audio{
+        return Audio::new_m(((time*self.freq % 2.) -1.)/10.)
     }
 }
 impl SawOscillator{
