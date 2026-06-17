@@ -1,26 +1,51 @@
+use std::sync::{Arc, Mutex};
+
 
 pub trait Modulator: Send{
     fn get_mod(&mut self, time: f64) -> Option<f64>;
 }
 impl Envelope {
-    pub fn new(attack: f64, decay: f64, sustain: f64, release: f64) -> Self{
+    pub fn new(attack: Box<dyn Modulator>, decay: Box<dyn Modulator>, sustain: Box<dyn Modulator>, release: Box<dyn Modulator>) -> Box<Self>{
+        Box::new(Self{ attack, decay, sustain, release, state: 0.0, sustained: true})
+    }
+    pub fn new_ub(attack: Box<dyn Modulator>, decay: Box<dyn Modulator>, sustain: Box<dyn Modulator>, release: Box<dyn Modulator>) -> Self{
         Self{ attack, decay, sustain, release, state: 0.0, sustained: true}
     }
 }
 impl Modulator for Envelope {
     fn get_mod(&mut self, time: f64) -> Option<f64> {
-        if self.sustained {
-            if time <= self.attack {
-                self.state = time / self.attack;
-                return Some(self.state);
-            }
-            else if time <= self.attack + self.decay {
-                self.state = 1.0 - ((time - self.attack) / (self.decay + self.sustain));
-                return Some(self.state);
-            }
-            return Some(self.sustain);
+        let attack;
+        let sustain;
+        let decay;
+        let release;
+        match self.attack.get_mod(time){
+            None => attack = 0.0,
+            Some(x) => attack = x,
         }
-        self.state -= 0.00001 / self.release;
+        match self.decay.get_mod(time){
+            None => decay = 0.0,
+            Some(x) => decay = x,
+        }
+        match self.sustain.get_mod(time){
+            None => sustain = 0.0,
+            Some(x) => sustain = x,
+        }
+        match self.release.get_mod(time){
+            None => release = 0.0,
+            Some(x) => release = x,
+        }
+        if self.sustained {
+            if time <= attack {
+                self.state = time / attack;
+                return Some(self.state);
+            }
+            else if time <= attack + decay {
+                self.state = 1.0 - ((time - attack) / (decay + sustain));
+                return Some(self.state);
+            }
+            return Some(sustain);
+        }
+        self.state -= 0.00001 / release;
         if self.state >= 0.0 {
             return Some(self.state);
         }
@@ -30,10 +55,10 @@ impl Modulator for Envelope {
     }
 }
 pub struct Envelope {
-    attack: f64,
-    decay: f64,
-    sustain: f64,
-    release: f64,
+    attack: Box<dyn Modulator>,
+    decay: Box<dyn Modulator>,
+    sustain: Box<dyn Modulator>,
+    release: Box<dyn Modulator>,
     state: f64,
     pub sustained: bool,
 }
@@ -48,26 +73,39 @@ pub struct LFO{
 }
 
 impl LFO {
-    pub fn new(freq: f64) -> Self{
-        Self{ freq}
+    pub fn new(freq: f64) -> Box<Self>{
+        Box::new(Self{ freq})
     }
 }
 
-impl Attenuator{
-    pub fn new(modulator: Box<dyn Modulator>, strength: f64, offset: f64) -> Self{
-        Self{ modulator, strength, offset }
+impl Attenuator {
+    pub fn new(modulator: Box<dyn Modulator>, strength: Box<dyn Modulator>, offset: Box<dyn Modulator>) -> Box<Self>{
+        Box::new(Self{ modulator, strength, offset })
+    }
+    pub fn new_s(modulator: Box<dyn Modulator>, strength: f64, offset: f64) -> Box<Self>{
+        Box::new(Self{ modulator, strength: Static::new(strength), offset: Static::new(offset) })
     }
 }
 
 pub struct Attenuator{
     modulator: Box<dyn Modulator>,
-    strength: f64,
-    offset: f64,
+    strength: Box<dyn Modulator>,
+    offset: Box<dyn Modulator>,
 }
 
 impl Modulator for Attenuator{
     fn get_mod(&mut self, time: f64) -> Option<f64> {
-        return Some(self.modulator.get_mod(time)? * self.strength + self.offset);
+        let strength;
+        let offset;
+        match self.strength.get_mod(time){
+            None => strength = 0.0,
+            Some(str) => strength = str,
+        }
+        match self.offset.get_mod(time){
+            None => offset = 0.0,
+            Some(ofs) => offset = ofs,
+        }
+        return Some(self.modulator.get_mod(time)? * strength + offset);
     }
 }
 
@@ -82,7 +120,24 @@ impl Modulator for Static{
 }
 
 impl Static{
-    pub fn new(value: f64) -> Self{
-        Self{ value }
+    pub fn new(value: f64) -> Box<Self>{
+        Box::new(Self{ value })
+    }
+}
+
+impl Dynamic{
+    pub fn new(map: Arc<Mutex<Vec<f32>>>, index: usize) -> Box<Self>{
+        Box::new(Self{ map, index})
+    }
+}
+
+pub struct Dynamic{
+    map: Arc<Mutex<Vec<f32>>>,
+    index: usize,
+}
+
+impl Modulator for Dynamic{
+    fn get_mod(&mut self, time: f64) -> Option<f64> {
+        return Some(self.map.lock().unwrap()[self.index] as f64);
     }
 }

@@ -7,7 +7,8 @@ use rodio::{MixerDeviceSink, Player};
 mod effector;
 mod oscillator;
 
-use crate::sound::effector::Stereo;
+use crate::sound::effector::modulator::Dynamic;
+use crate::sound::effector::{Distortion, Stereo};
 pub use crate::sound::effector::modulator::{Static, Envelope, Modulator, Attenuator};
 use crate::sound::effector::{Effector, HpFilter, LpFilter, modulator::LFO, Delay};
 use crate::sound::oscillator::{Oscillator, SawOscillator, SineOscillator, SquareOscillator};
@@ -63,18 +64,31 @@ pub struct MasterAudio{
 
 impl MasterAudio{
     pub fn new() -> Self{
+        let delay = Box::new(Stereo::new(
+                Box::new(Delay::new(Static::new(55000.0), 0.8, None)), 
+                Box::new(Delay::new(Static::new(50000.0), 0.8, None)),
+                None, 
+            )); 
+        let chorus = Box::new(Stereo::new(
+                Box::new(Delay::new(Attenuator::new_s(LFO::new(3.2), 400., 620.), 0.1, None)), 
+                Box::new(Delay::new(Attenuator::new_s(LFO::new(4.2), 400., 620.), 0.1, None)),
+                Some(delay),
+        )); 
+        let chorus2 = Box::new(Stereo::new(
+                Box::new(Delay::new(Attenuator::new_s(LFO::new(4.0), 400., 620.), 0.1, None)), 
+                Box::new(Delay::new(Attenuator::new_s(LFO::new(3.0), 400., 620.), 0.1, None)),
+                Some(chorus),
+        )); 
+        let distortion = Box::new(
+            Distortion::new(Static::new(0.0), 
+            None
+        )
+        );
         Self{ 
             sources: Arc::new(Mutex::new(Vec::new())),
             /* 
-            effector: Box::new(Stereo::new(
-                Box::new(Delay::new(Box::new(Attenuator::new(Box::new(LFO::new(10.0)), 200., 200.)), 0.2, None)), 
-                Box::new(Delay::new(Box::new(Attenuator::new(Box::new(LFO::new(8.0)), 200., 200.)), 0.2, None))
-            )), 
             */
-            effector: Box::new(Stereo::new(
-                Box::new(Delay::new(Box::new(Static::new(5500.0)), 0.8, None)), 
-                Box::new(Delay::new(Box::new(Static::new(5000.0)), 0.8, None))
-            )), 
+            effector: distortion,
             time: 0.0, 
             cur_sample: Audio::new_m(0.0), 
             done:true 
@@ -106,13 +120,24 @@ impl Iterator for MasterAudio {
     }
 }
 
-pub fn play_note(mut sources: Arc<Mutex<Vec<AudioGenerator>>>, frequency: f64) -> Arc<Mutex<Envelope>> {
+pub struct SynthValues{
+    pub cutoff: f32,
+    pub resonance: f32,
+}
+
+impl SynthValues{
+    pub fn new(cutoff: f32, resonance: f32) -> Self{
+        Self{cutoff, resonance}
+    }
+}
+
+pub fn play_note(sources: Arc<Mutex<Vec<AudioGenerator>>>, frequency: f64, values: Arc<Mutex<Vec<f32>>>) -> Arc<Mutex<Envelope>> {
     // _stream must live as long as the sink
-    let envelope = Envelope::new(
-        0.01,
-        0.2,
-        0.50,
-        0.2,
+    let envelope = Envelope::new_ub(
+        Dynamic::new(values.clone(), 7), 
+        Dynamic::new(values.clone(), 8), 
+        Dynamic::new(values.clone(), 9),
+        Dynamic::new(values.clone(), 10) 
     );
 
     let envelope = Arc::new(Mutex::new(envelope));
@@ -124,13 +149,16 @@ pub fn play_note(mut sources: Arc<Mutex<Vec<AudioGenerator>>>, frequency: f64) -
         oscillator: Box::new(SawOscillator::new(frequency)),
         effector:
             Box::new(LpFilter::new(
-                Box::new(Attenuator::new(
-                    Box::new(Envelope::new(
-                        1.1, 0.2, 0.30, 0.2
-                    )), 
-                    3000., 200.0,
-                )), 
-                10.0, None,
+                Attenuator::new(
+                    Envelope::new(
+                        Dynamic::new(values.clone(), 3), 
+                        Dynamic::new(values.clone(), 4), 
+                        Dynamic::new(values.clone(), 5),
+                        Dynamic::new(values.clone(), 6) 
+                    ), 
+                    Dynamic::new(values.clone(), 2), Dynamic::new(values.clone(), 0),
+                ), 
+                Dynamic::new(values.clone(), 1), None,
             )),
         envelope: envelope.clone(),
     };
