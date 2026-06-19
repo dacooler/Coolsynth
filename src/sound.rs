@@ -8,7 +8,7 @@ mod effector;
 mod oscillator;
 
 use crate::sound::effector::modulator::Dynamic;
-use crate::sound::effector::{Distortion, Stereo};
+use crate::sound::effector::{Distortion, Stereo, Toggle};
 pub use crate::sound::effector::modulator::{Static, Envelope, Modulator, Attenuator};
 use crate::sound::effector::{Effector, HpFilter, LpFilter, modulator::LFO, Delay};
 use crate::sound::oscillator::{Oscillator, SawOscillator, SineOscillator, SquareOscillator};
@@ -63,25 +63,25 @@ pub struct MasterAudio{
 }
 
 impl MasterAudio{
-    pub fn new() -> Self{
-        let delay = Box::new(Stereo::new(
-                Box::new(Delay::new(Static::new(55000.0), 0.8, None)), 
-                Box::new(Delay::new(Static::new(50000.0), 0.8, None)),
+    pub fn new(values: Arc<Mutex<Vec<f32>>>, toggles: Arc<Mutex<Vec<bool>>>) -> Self{
+        let delay = Toggle::new(toggles.clone(), 1, Box::new(Stereo::new(
+                Box::new(Delay::new(Static::new(5500.0), 0.8, None)), 
+                Box::new(Delay::new(Static::new(5000.0), 0.8, None)),
                 None, 
-            )); 
+            ))); 
         let chorus = Box::new(Stereo::new(
                 Box::new(Delay::new(Attenuator::new_s(LFO::new(3.2), 400., 620.), 0.1, None)), 
                 Box::new(Delay::new(Attenuator::new_s(LFO::new(4.2), 400., 620.), 0.1, None)),
                 Some(delay),
         )); 
-        let chorus2 = Box::new(Stereo::new(
+        let chorus2 = Toggle::new(toggles.clone(), 0, Box::new(Stereo::new(
                 Box::new(Delay::new(Attenuator::new_s(LFO::new(4.0), 400., 620.), 0.1, None)), 
                 Box::new(Delay::new(Attenuator::new_s(LFO::new(3.0), 400., 620.), 0.1, None)),
                 Some(chorus),
-        )); 
+        ))); 
         let distortion = Box::new(
-            Distortion::new(Static::new(0.0), 
-            None
+            Distortion::new(Dynamic::new(values, 11), 
+            Some(chorus2) 
         )
         );
         Self{ 

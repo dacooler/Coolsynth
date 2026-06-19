@@ -14,7 +14,9 @@ use crate::sound::{AudioGenerator, Envelope, SynthValues};
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions::default();
     let handle = rodio::DeviceSinkBuilder::open_default_sink().expect("open default audio stream");
-    let master_audio = MasterAudio::new(); 
+    let values = Arc::new(Mutex::new(vec![ 10000.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0]));
+    let toggles = Arc::new(Mutex::new(vec![false, false, false]));
+    let master_audio = MasterAudio::new(values.clone(), toggles.clone()); 
     let sources = master_audio.sources.clone();
     
     handle.mixer().add(master_audio);
@@ -24,9 +26,10 @@ fn main() -> eframe::Result {
         Box::new(|_cc| {
             Ok(Box::new(Content {
                 text: "".to_string(),
+                values: values.clone(),
+                toggles: toggles.clone(),
                 sources: sources,
                 envelopes: vec![None, None, None, None, None, None, None],
-                values: Arc::new(Mutex::new(vec![ 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])),
             }))
         }),
     )
@@ -37,6 +40,7 @@ struct Content {
     sources: Arc<Mutex<Vec<AudioGenerator>>>,
     envelopes: Vec<Option<Arc<Mutex<Envelope>>>>,
     values: Arc<Mutex<Vec<f32>>>,
+    toggles: Arc<Mutex<Vec<bool>>>,
 }
 static SYNTH_VALUES: LazyLock<SynthValues> = LazyLock::new(|| SynthValues::new(0.0, 0.0));
 
@@ -46,7 +50,7 @@ impl eframe::App for Content {
             ui.heading("Press/Hold/Release example. Press A to test.");
             ui.add(egui::Slider::new(&mut self.values.lock().unwrap()[0], 1.0..=10000.0).text("cutoff"));
             ui.add(egui::Slider::new(&mut self.values.lock().unwrap()[2], 1.0..=10000.0).text("cutoff env"));
-            ui.add(egui::Slider::new(&mut self.values.lock().unwrap()[1], 1.0..=100.0).text("resonance"));
+            ui.add(egui::Slider::new(&mut self.values.lock().unwrap()[1], 1.0..=10.0).text("resonance"));
 
             ui.add(egui::Slider::new(&mut self.values.lock().unwrap()[3], 0.001..=10.0).text("cutoff A"));
             ui.add(egui::Slider::new(&mut self.values.lock().unwrap()[4], 0.001..=10.0).text("cutoff D"));
@@ -57,6 +61,10 @@ impl eframe::App for Content {
             ui.add(egui::Slider::new(&mut self.values.lock().unwrap()[8], 0.001..=10.0).text("volume D"));
             ui.add(egui::Slider::new(&mut self.values.lock().unwrap()[9], 0.001..=1.0).text("volume S"));
             ui.add(egui::Slider::new(&mut self.values.lock().unwrap()[10],0.001..=10.0).text("volume R"));
+
+            ui.add(egui::Slider::new(&mut self.values.lock().unwrap()[11],0.0..=1.0).text("Distortion"));
+            ui.add(egui::Checkbox::new(&mut self.toggles.lock().unwrap()[0], "chorus"));
+            ui.add(egui::Checkbox::new(&mut self.toggles.lock().unwrap()[1], "delay"));
             if ui.button("Clear").clicked() {
                 self.text.clear();
             }

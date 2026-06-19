@@ -1,4 +1,4 @@
-use std::{collections::VecDeque, f64::consts::PI};
+use std::{collections::VecDeque, f64::consts::PI, sync::{Arc, Mutex}};
 
 use eframe::egui::Key::L;
 
@@ -195,5 +195,26 @@ impl Effector for Distortion{
 impl Distortion{
     pub fn new(amount: Box<dyn Modulator>, next: Option<Box<dyn Effector>>) -> Self{
         Self{ amount, next }
+    }
+}
+
+impl Effector for Toggle{
+    fn effect(&mut self, input: Audio, time: f64) -> Audio {
+        if self.toggles.lock().unwrap()[self.index] {
+            return self.effect.effect(input, time);
+        }
+        return input;
+    }
+}
+
+pub struct Toggle{
+    toggles: Arc<Mutex<Vec<bool>>>,
+    index: usize,
+    effect: Box<dyn Effector>,
+}
+
+impl Toggle{
+    pub fn new(toggles: Arc<Mutex<Vec<bool>>>, index: usize, effect: Box<dyn Effector>) -> Box<Self>{
+        Box::new(Self{ toggles, index, effect})
     }
 }

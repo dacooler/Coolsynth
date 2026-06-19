@@ -20,11 +20,11 @@ impl Modulator for Envelope {
         let release;
         match self.attack.get_mod(time){
             None => attack = 0.0,
-            Some(x) => attack = x,
+            Some(x) => attack = x.powi(2),
         }
         match self.decay.get_mod(time){
             None => decay = 0.0,
-            Some(x) => decay = x,
+            Some(x) => decay = x.powi(2),
         }
         match self.sustain.get_mod(time){
             None => sustain = 0.0,
@@ -32,7 +32,7 @@ impl Modulator for Envelope {
         }
         match self.release.get_mod(time){
             None => release = 0.0,
-            Some(x) => release = x,
+            Some(x) => release = x.powi(2),
         }
         if self.sustained {
             if time <= attack {
