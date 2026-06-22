@@ -11,8 +11,8 @@ impl Oscillator for SineOscillator{
     }
 }
 impl SineOscillator{
-    pub fn new(freq: f64) -> Self{
-        Self{freq}
+    pub fn new(freq: f64) -> Box<Self>{
+        Box::new(Self{freq})
     }
 }
 pub struct SineOscillator{
@@ -30,8 +30,8 @@ impl Oscillator for SquareOscillator{
     }
 }
 impl SquareOscillator{
-    pub fn new(freq: f64) -> Self{
-        Self{freq}
+    pub fn new(freq: f64) -> Box<Self>{
+        Box::new(Self{freq})
     }
 }
 pub struct SquareOscillator{
@@ -45,10 +45,30 @@ impl Oscillator for SawOscillator{
     }
 }
 impl SawOscillator{
-    pub fn new(freq: f64) -> Self{
-        Self{freq}
+    pub fn new(freq: f64) -> Box<Self>{
+        Box::new(Self{freq})
     }
 }
 pub struct SawOscillator{
     freq: f64,
+}
+
+pub struct Unison{
+    oscillators: Vec<Box<dyn Oscillator>>,
+}
+
+impl Oscillator for Unison{
+    fn get_wave(&self, time: f64) -> Audio {
+        let mut out = Audio::new(0.0, 0.0);
+        for oscillator in &self.oscillators{
+            out = out + oscillator.get_wave(time); 
+        }
+        return out;
+    }
+}
+
+impl Unison{
+    pub fn new(oscillators: Vec<Box<dyn Oscillator>>) -> Box<Self>{
+        Box::new(Self{ oscillators })
+    }
 }

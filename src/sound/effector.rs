@@ -56,10 +56,7 @@ impl Effector for HpFilter {
             Some(alpha) => {
                 self.state = alpha * input + (1. - alpha) * self.state;
                 let out = input - self.state;
-                match &mut self.next{
-                    Some(effector) => return effector.effect(out, time),
-                    None => return out 
-                }
+                return out 
             },
         }
     }
@@ -71,12 +68,11 @@ impl LpFilter {
 }
 impl HpFilter {
     pub fn new(alpha: Box<dyn Modulator>, next: Option<Box<dyn Effector>>) -> Self{
-        Self{ alpha, next, state: Audio::new_m(0.0) }
+        Self{ alpha, state: Audio::new_m(0.0) }
     }
 }
 pub struct HpFilter {
     alpha: Box<dyn Modulator>,
-    next: Option<Box<dyn Effector>>,
     state: Audio,
 }
 pub struct LpFilter {
@@ -89,12 +85,11 @@ pub struct LpFilter {
 pub struct Delay {
     time: Box<dyn Modulator>,
     feedback: f64,
-    next: Option<Box<dyn Effector>>,
     bbd: VecDeque<Audio>,
 }
 impl Delay {
-    pub fn new(time: Box<dyn Modulator>, feedback: f64, next: Option<Box<dyn Effector>>) -> Self{
-        Self{ time, feedback, next, bbd: VecDeque::new() }
+    pub fn new(time: Box<dyn Modulator>, feedback: f64) -> Self{
+        Self{ time, feedback, bbd: VecDeque::new() }
     }
 }
 
@@ -124,49 +119,42 @@ impl Effector for Delay{
                     Some(value) => {*value = *value + out * self.feedback},
                 }
             }
-            match &mut self.next{
-                Some(effector) => return effector.effect(out, time) + input,
-                None => return out + input,
-            }
+            return out;
         },
        }
     }
 }
 
 pub struct Stereo{
-    left: Box<dyn Effector>,
-    right: Box<dyn Effector>,
-    next: Option<Box<dyn Effector>>,
+    left: Vec<Box<dyn Effector>>,
+    right: Vec<Box<dyn Effector>>,
 }
 
 impl Effector for Stereo{
     fn effect(&mut self, input: Audio, time: f64) -> Audio {
-        let out = Audio::new(self.left.effect(Audio::new_m(input.left), time).left, self.right.effect(Audio::new_m(input.right), time).right);
-        match &mut self.next{
-            Some(effector) => return effector.effect(out, time),
-            None => return out 
+        let mut left = Audio::new_m(input.left);
+        let mut right = Audio::new_m(input.right);
+        for effect in &mut self.left{
+            left = effect.effect(left, time);
         }
+        for effect in &mut self.right{
+            right = effect.effect(right, time);
+        }
+        return Audio::new(left.left, right.right); 
     }
 }
 
 impl Stereo{
-    pub fn new(left: Box<dyn Effector>, right: Box<dyn Effector>, next: Option<Box<dyn Effector>>) -> Self{
-        Self{ left: left, right: right, next}
+    pub fn new(left: Vec<Box<dyn Effector>>, right: Vec<Box<dyn Effector>>) -> Box<Self>{
+        Box::new(Self{ left: left, right: right})
     }
 }
 
 pub struct Distortion{
-    amount: Box<dyn Modulator>,
-    next: Option<Box<dyn Effector>>
 }
 
 impl Effector for Distortion{
     fn effect(&mut self, input: Audio, time: f64) -> Audio {
-        let amount;
-        match self.amount.get_mod(time){
-            None => amount = 0.0,
-            Some(modding) => amount = modding,
-        }
         let outleft;
         let outright;
         if input.left > 0.0{
@@ -184,17 +172,14 @@ impl Effector for Distortion{
             outright = -right.powf(0.5);
         }
 
-        let out = ((1.-amount) * input) + (amount * Audio::new(outleft, outright));
-        match &mut self.next{
-            Some(effector) => return effector.effect(out, time),
-            None => return out 
-        }
+        let out = Audio::new(outleft, outright);
+        return out 
     }
 }
 
 impl Distortion{
-    pub fn new(amount: Box<dyn Modulator>, next: Option<Box<dyn Effector>>) -> Self{
-        Self{ amount, next }
+    pub fn new() -> Box<Self>{
+        Box::new(Self{})
     }
 }
 
@@ -216,5 +201,27 @@ pub struct Toggle{
 impl Toggle{
     pub fn new(toggles: Arc<Mutex<Vec<bool>>>, index: usize, effect: Box<dyn Effector>) -> Box<Self>{
         Box::new(Self{ toggles, index, effect})
+    }
+}
+
+pub struct Mixer{
+    effector: Box<dyn Effector>,
+    mix: Box<dyn Modulator>,
+}
+
+impl Mixer{
+    pub fn new(effector: Box<dyn Effector>, mix: Box<dyn Modulator>,) -> Box<Self>{
+        Box::new(Self{ effector, mix })
+    }
+}
+
+impl Effector for Mixer{
+    fn effect(&mut self, input: Audio, time: f64) -> Audio {
+        let mix = self.mix.get_mod(time);
+        match mix{
+            Some(mix) => return input * (1. - mix) + self.effector.effect(input, time) * mix,
+            None => return input,
+        }
+
     }
 }
