@@ -114,10 +114,10 @@ impl Effector for Delay{
             }
             else{
                 out = Option::expect(self.bbd.pop_back(), "whoops");
-                match self.bbd.front_mut(){
-                    None => {},
-                    Some(value) => {*value = *value + out * self.feedback},
-                }
+            }
+            match self.bbd.front_mut(){
+                None => {},
+                Some(value) => {*value = *value + out * self.feedback},
             }
             return out;
         },

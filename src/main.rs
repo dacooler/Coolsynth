@@ -14,7 +14,7 @@ use crate::sound::{AudioGenerator, Envelope, SynthValues};
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions::default();
     let handle = rodio::DeviceSinkBuilder::open_default_sink().expect("open default audio stream");
-    let values = Arc::new(Mutex::new(vec![ 10000.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0]));
+    let values = Arc::new(Mutex::new(vec![ 10000.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]));
     let toggles = Arc::new(Mutex::new(vec![false, false, false]));
     let master_audio = MasterAudio::new(values.clone(), toggles.clone()); 
     let sources = master_audio.sources.clone();
@@ -29,7 +29,7 @@ fn main() -> eframe::Result {
                 values: values.clone(),
                 toggles: toggles.clone(),
                 sources: sources,
-                envelopes: vec![None, None, None, None, None, None, None],
+                envelopes: vec![None, None, None, None, None, None, None, None, None, None, None],
             }))
         }),
     )
@@ -65,6 +65,7 @@ impl eframe::App for Content {
             ui.add(egui::Slider::new(&mut self.values.lock().unwrap()[11],0.0..=1.0).text("Distortion"));
             ui.add(egui::Slider::new(&mut self.values.lock().unwrap()[12],0.0..=1.0).text("Chorus"));
             ui.add(egui::Slider::new(&mut self.values.lock().unwrap()[13],0.0..=1.0).text("Delay"));
+            ui.add(egui::Slider::new(&mut self.values.lock().unwrap()[14],0.0..=5.0).text("Delay time"));
             ui.add(egui::Checkbox::new(&mut self.toggles.lock().unwrap()[0], "chorus"));
             ui.add(egui::Checkbox::new(&mut self.toggles.lock().unwrap()[1], "delay"));
             if ui.button("Clear").clicked() {
@@ -84,6 +85,8 @@ impl eframe::App for Content {
                 ("G", 659.25),
                 ("H", 698.46),
                 ("J", 783.99),
+                ("K", 880.0),
+                ("L", 987.76),
             ];
             for (index, (key, freq)) in keys.iter().enumerate(){
                 if ui.input(|i| i.key_pressed(Key::from_name(key).unwrap())) {

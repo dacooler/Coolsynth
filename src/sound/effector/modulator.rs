@@ -141,3 +141,33 @@ impl Modulator for Dynamic{
         return Some(self.map.lock().unwrap()[self.index] as f64);
     }
 }
+
+pub struct Slew{
+    input: Box<dyn Modulator>,
+    speed: f64,
+    state: f64,
+}
+
+impl Slew{
+    pub fn new(input: Box<dyn Modulator>, speed: f64) -> Box<Self>{
+        Box::new(Self{input, speed, state: 0.0})
+    }
+}
+
+impl Modulator for Slew{
+    fn get_mod(&mut self, time: f64) -> Option<f64> {
+        let modulation = self.input.get_mod(time);
+        let input;
+        match modulation {
+            None => input = 0.0,
+            Some(modulation) => input = modulation,
+        };
+        if self.state > input {
+            self.state -= self.speed.min(self.state - input);
+        }
+        if self.state < input {
+            self.state += self.speed.min(input - self.state);
+        }
+        Some(self.state)
+    }
+}

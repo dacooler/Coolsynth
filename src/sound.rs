@@ -7,7 +7,7 @@ use rodio::{MixerDeviceSink, Player};
 mod effector;
 mod oscillator;
 
-use crate::sound::effector::modulator::Dynamic;
+use crate::sound::effector::modulator::{Dynamic, Slew};
 use crate::sound::effector::{Distortion, Mixer, Stereo, Toggle};
 pub use crate::sound::effector::modulator::{Static, Envelope, Modulator, Attenuator};
 use crate::sound::effector::{Effector, HpFilter, LpFilter, modulator::LFO, Delay};
@@ -67,8 +67,8 @@ pub struct MasterAudio{
 impl MasterAudio{
     pub fn new(values: Arc<Mutex<Vec<f32>>>, toggles: Arc<Mutex<Vec<bool>>>) -> Self{
         let delay = Toggle::new(toggles.clone(), 1, Mixer::new(Stereo::new(
-                vec![Box::new(Delay::new(Static::new(5500.0), 0.8))], 
-                vec![Box::new(Delay::new(Static::new(5000.0), 0.8))],
+                vec![Box::new(Delay::new(Slew::new(Attenuator::new_s(Dynamic::new(values.clone(), 14), 44100., 200.), 0.5), 1.0))],
+                vec![Box::new(Delay::new(Slew::new(Attenuator::new_s(Dynamic::new(values.clone(), 14), 44100., 0.), 0.5), 1.0))],
             ), Dynamic::new(values.clone(), 13))); 
         let chorus = Toggle::new(toggles.clone(), 0, Mixer::new(
             Stereo::new(
