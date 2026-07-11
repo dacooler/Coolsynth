@@ -88,8 +88,8 @@ pub struct Delay {
     bbd: VecDeque<Audio>,
 }
 impl Delay {
-    pub fn new(time: Box<dyn Modulator>, feedback: f64) -> Self{
-        Self{ time, feedback, bbd: VecDeque::new() }
+    pub fn new(time: Box<dyn Modulator>, feedback: f64) -> Box<Self>{
+        Box::new(Self{ time, feedback, bbd: VecDeque::new() })
     }
 }
 
@@ -223,5 +223,31 @@ impl Effector for Mixer{
             None => return input,
         }
 
+    }
+}
+
+pub struct Feedback{
+    effector: Box<dyn Effector>,
+    amount: Box<dyn Modulator>,
+    state: Audio,
+}
+
+impl Effector for Feedback{
+    fn effect(&mut self, input: Audio, time: f64) -> Audio {
+       let amount = self.amount.get_mod(time); 
+       let feedback;
+       match amount{
+        Some(amount) => feedback = amount, 
+        None => feedback = 0.0,
+       }
+       let out = self.effector.effect(input + self.state * feedback, time);
+       self.state = out;
+       return out;
+    }
+}
+
+impl Feedback{
+    pub fn new(effector: Box<dyn Effector>, amount: Box<dyn Modulator>) -> Box<Self>{
+        Box::new(Self{ effector, amount, state: Audio::new_m(0.0)})
     }
 }

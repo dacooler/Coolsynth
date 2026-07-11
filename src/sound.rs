@@ -8,7 +8,7 @@ mod effector;
 mod oscillator;
 
 use crate::sound::effector::modulator::{Dynamic, Slew};
-use crate::sound::effector::{Distortion, Mixer, Stereo, Toggle};
+use crate::sound::effector::{Distortion, Feedback, Mixer, Stereo, Toggle};
 pub use crate::sound::effector::modulator::{Static, Envelope, Modulator, Attenuator};
 use crate::sound::effector::{Effector, HpFilter, LpFilter, modulator::LFO, Delay};
 use crate::sound::oscillator::{Oscillator, SawOscillator, SineOscillator, SquareOscillator, Unison};
@@ -67,19 +67,19 @@ pub struct MasterAudio{
 impl MasterAudio{
     pub fn new(values: Arc<Mutex<Vec<f32>>>, toggles: Arc<Mutex<Vec<bool>>>) -> Self{
         let delay = Toggle::new(toggles.clone(), 1, Mixer::new(Stereo::new(
-                vec![Box::new(Delay::new(Slew::new(Attenuator::new_s(Dynamic::new(values.clone(), 14), 44100., 200.), 0.5), 1.0))],
-                vec![Box::new(Delay::new(Slew::new(Attenuator::new_s(Dynamic::new(values.clone(), 14), 44100., 0.), 0.5), 1.0))],
+                vec![Feedback::new(Delay::new(Slew::new(Attenuator::new_s(Dynamic::new(values.clone(), 14), 44100., 200.), 0.5), 0.0), Dynamic::new(values.clone(), 15))],
+                vec![Feedback::new(Delay::new(Slew::new(Attenuator::new_s(Dynamic::new(values.clone(), 14), 44100., 0.), 0.5), 0.0), Dynamic::new(values.clone(), 15))],
             ), Dynamic::new(values.clone(), 13))); 
         let chorus = Toggle::new(toggles.clone(), 0, Mixer::new(
             Stereo::new(
-                vec![Box::new(Delay::new(Attenuator::new_s(LFO::new(3.2), 400., 620.), 0.1))],
-                vec![Box::new(Delay::new(Attenuator::new_s(LFO::new(4.2), 400., 620.), 0.1))],
+                vec![Delay::new(Attenuator::new_s(LFO::new(3.2), 400., 620.), 0.1)],
+                vec![Delay::new(Attenuator::new_s(LFO::new(4.2), 400., 620.), 0.1)],
             ), 
             Attenuator::new_s(Dynamic::new(values.clone(), 12), 0.5, 0.0))); 
         let chorus2 = Toggle::new(toggles.clone(), 0, 
             Mixer::new(Stereo::new(
-                vec![Box::new(Delay::new(Attenuator::new_s(LFO::new(4.0), 400., 620.), 0.1))], 
-                vec![Box::new(Delay::new(Attenuator::new_s(LFO::new(3.0), 400., 620.), 0.1))],
+                vec![Delay::new(Attenuator::new_s(LFO::new(4.0), 400., 620.), 0.1)], 
+                vec![Delay::new(Attenuator::new_s(LFO::new(3.0), 400., 620.), 0.1)],
             ),
             Dynamic::new(values.clone(), 12))); 
         let distortion = 

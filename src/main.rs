@@ -1,12 +1,13 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 #![expect(rustdoc::missing_crate_level_docs)] // it's an example
 
-use std::{collections::HashMap, sync::{Arc, LazyLock, Mutex}};
+use std::{collections::HashMap, fs::{self, File}, io::{self, Write}, sync::{Arc, LazyLock, Mutex}};
 
 use eframe::{egui, wgpu::naga::compact::KeepUnused::No};
 use egui::{Key, ScrollArea};
 mod sound;
 use rodio::{MixerDeviceSink, Player, mixer::Mixer};
+use serde_json::Value;
 use sound::{play_note, MasterAudio};
 
 use crate::sound::{AudioGenerator, Envelope, SynthValues};
@@ -14,7 +15,7 @@ use crate::sound::{AudioGenerator, Envelope, SynthValues};
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions::default();
     let handle = rodio::DeviceSinkBuilder::open_default_sink().expect("open default audio stream");
-    let values = Arc::new(Mutex::new(vec![ 10000.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]));
+    let values = Arc::new(Mutex::new(vec![ 10000.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]));
     let toggles = Arc::new(Mutex::new(vec![false, false, false]));
     let master_audio = MasterAudio::new(values.clone(), toggles.clone()); 
     let sources = master_audio.sources.clone();
@@ -66,10 +67,18 @@ impl eframe::App for Content {
             ui.add(egui::Slider::new(&mut self.values.lock().unwrap()[12],0.0..=1.0).text("Chorus"));
             ui.add(egui::Slider::new(&mut self.values.lock().unwrap()[13],0.0..=1.0).text("Delay"));
             ui.add(egui::Slider::new(&mut self.values.lock().unwrap()[14],0.0..=5.0).text("Delay time"));
+            ui.add(egui::Slider::new(&mut self.values.lock().unwrap()[15],0.0..=1.0).text("Delay feedback"));
             ui.add(egui::Checkbox::new(&mut self.toggles.lock().unwrap()[0], "chorus"));
             ui.add(egui::Checkbox::new(&mut self.toggles.lock().unwrap()[1], "delay"));
-            if ui.button("Clear").clicked() {
-                self.text.clear();
+            if ui.button("save").clicked() {
+                let mut values: Vec<f32> = vec![];
+                for value in self.values.clone().lock().unwrap().iter_mut(){
+                    values.push(*value);
+                }
+                let _ = write_json(values);
+            }
+            if ui.button("load").clicked() {
+                let _ = load_json(self.values.clone());
             }
             ScrollArea::vertical()
                 .auto_shrink(false)
@@ -101,4 +110,23 @@ impl eframe::App for Content {
             };
         });
     }
+}
+
+fn write_json(data: Vec<f32>) -> Result<(), io::Error> {
+    let json = serde_json::to_string(&data)?;
+    let path = "saved.json";
+    let mut output = File::create(path)?;
+    write!(output, "{}", json)?;
+
+    Ok(())
+}
+
+fn load_json(values: Arc<Mutex<Vec<f32>>>) -> Result<(), io::Error>{
+    let json = fs::read_to_string("saved.json").expect("file should be able to be read");
+    let data: Vec<f32> = serde_json::from_str(&json)?;
+    println!("{:?}", data);
+    for i in 0..=data.len() - 1{
+        values.lock().unwrap()[i] = data[i];
+    }
+    Ok(())
 }
