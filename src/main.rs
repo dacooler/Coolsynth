@@ -2,60 +2,40 @@
 #![expect(rustdoc::missing_crate_level_docs)] // it's an example
 
 use std::{
-    collections::HashMap,
     error::Error,
     fs::{self, File},
     io::{self, Write, stdin, stdout},
-    sync::{Arc, LazyLock, Mutex},
+    sync::{Arc, LazyLock},
 };
 
-use indexmap::IndexMap;
+use arc_swap::ArcSwap;
 
-use eframe::{egui, wgpu::naga::compact::KeepUnused::No};
-use egui::{Key, ScrollArea};
+use eframe::egui;
+use egui::ScrollArea;
 mod sound;
 use midir::{Ignore, MidiInput};
-use rodio::{MixerDeviceSink, Player, mixer::Mixer};
-use serde_json::Value;
-use sound::{MasterAudio, MasterAudioIterator, play_note, stop_playing};
+use sound::MasterAudio;
+use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread;
 
-use crate::sound::{AudioGenerator, Envelope, SynthValues};
-
-struct Sounds {
-    pub envelopes: Arc<Mutex<IndexMap<u8, Arc<Mutex<Envelope>>>>>,
-    pub sources: Arc<Mutex<Vec<AudioGenerator>>>,
-    pub values: Arc<Mutex<Vec<f32>>>,
-}
+use crate::sound::SynthValues;
 
 fn main() -> eframe::Result {
-    let values = Arc::new(Mutex::new(vec![
+    let values = Arc::new(ArcSwap::from_pointee(vec![
         10000.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
     ]));
-    let toggles = Arc::new(Mutex::new(vec![false, false, false]));
-    let sources = Arc::new(Mutex::new(Vec::new()));
-    let envelopes = Arc::new(Mutex::new(IndexMap::new()));
-    let master_audio = MasterAudio::new(
-        values.clone(),
-        toggles.clone(),
-        sources.clone(),
-        envelopes.clone(),
-    );
+    let toggles = Arc::new(ArcSwap::from_pointee(vec![false, false, false]));
 
-    let sounds = Sounds {
-        envelopes: envelopes.clone(),
-        sources: sources.clone(),
-        values: values.clone(),
-    };
+    let (send, recv): (Sender<(u8, u8, u8)>, Receiver<(u8, u8, u8)>) = channel();
+
+    let master_audio = MasterAudio::new(values.clone(), toggles.clone(), recv);
 
     let options = eframe::NativeOptions::default();
     let handle = rodio::DeviceSinkBuilder::open_default_sink().expect("open default audio stream");
 
-    handle.mixer().add(MasterAudioIterator {
-        master_audio: master_audio,
-    });
+    handle.mixer().add(master_audio);
 
-    thread::spawn(move || match run(sounds) {
+    thread::spawn(move || match run(send) {
         Ok(_) => (),
         Err(err) => println!("Error: {}", err),
     });
@@ -66,9 +46,8 @@ fn main() -> eframe::Result {
         Box::new(|_cc| {
             Ok(Box::new(Content {
                 text: "".to_string(),
-                values: values.clone(),
-                toggles: toggles.clone(),
-                id_counter: 1,
+                values,
+                toggles,
             }))
         }),
     )
@@ -76,92 +55,48 @@ fn main() -> eframe::Result {
 
 struct Content {
     text: String,
-    values: Arc<Mutex<Vec<f32>>>,
-    toggles: Arc<Mutex<Vec<bool>>>,
-    id_counter: i32,
+    values: Arc<ArcSwap<Vec<f32>>>,
+    toggles: Arc<ArcSwap<Vec<bool>>>,
 }
 static SYNTH_VALUES: LazyLock<SynthValues> = LazyLock::new(|| SynthValues::new(0.0, 0.0));
 
 impl eframe::App for Content {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ui, |ui| {
+            let mut new_values = (**self.values.load()).clone();
             ui.heading("Press/Hold/Release example. Press A to test.");
-            ui.add(
-                egui::Slider::new(&mut self.values.lock().unwrap()[0], 1.0..=10000.0)
-                    .text("cutoff"),
-            );
-            ui.add(
-                egui::Slider::new(&mut self.values.lock().unwrap()[2], 1.0..=10000.0)
-                    .text("cutoff env"),
-            );
-            ui.add(
-                egui::Slider::new(&mut self.values.lock().unwrap()[1], 1.0..=10.0)
-                    .text("resonance"),
-            );
+            ui.add(egui::Slider::new(&mut new_values[0], 1.0..=10000.0).text("cutoff"));
+            ui.add(egui::Slider::new(&mut new_values[1], 1.0..=10.0).text("resonance"));
+            ui.add(egui::Slider::new(&mut new_values[2], 1.0..=10000.0).text("cutoff env"));
+            ui.add(egui::Slider::new(&mut new_values[3], 0.001..=10.0).text("cutoff A"));
+            ui.add(egui::Slider::new(&mut new_values[4], 0.001..=10.0).text("cutoff D"));
+            ui.add(egui::Slider::new(&mut new_values[5], 0.001..=1.0).text("cutoff S"));
+            ui.add(egui::Slider::new(&mut new_values[6], 0.001..=10.0).text("cutoff R"));
+            ui.add(egui::Slider::new(&mut new_values[7], 0.001..=10.0).text("volume A"));
+            ui.add(egui::Slider::new(&mut new_values[8], 0.001..=10.0).text("volume D"));
+            ui.add(egui::Slider::new(&mut new_values[9], 0.001..=1.0).text("volume S"));
+            ui.add(egui::Slider::new(&mut new_values[10], 0.001..=10.0).text("volume R"));
+            ui.add(egui::Slider::new(&mut new_values[11], 0.0..=1.0).text("Distortion"));
+            ui.add(egui::Slider::new(&mut new_values[12], 0.0..=1.0).text("Chorus"));
+            ui.add(egui::Slider::new(&mut new_values[13], 0.0..=1.0).text("Delay"));
+            ui.add(egui::Slider::new(&mut new_values[14], 0.0..=5.0).text("Delay time"));
+            ui.add(egui::Slider::new(&mut new_values[15], 0.0..=1.0).text("Delay feedback"));
 
-            ui.add(
-                egui::Slider::new(&mut self.values.lock().unwrap()[3], 0.001..=10.0)
-                    .text("cutoff A"),
-            );
-            ui.add(
-                egui::Slider::new(&mut self.values.lock().unwrap()[4], 0.001..=10.0)
-                    .text("cutoff D"),
-            );
-            ui.add(
-                egui::Slider::new(&mut self.values.lock().unwrap()[5], 0.001..=1.0)
-                    .text("cutoff S"),
-            );
-            ui.add(
-                egui::Slider::new(&mut self.values.lock().unwrap()[6], 0.001..=10.0)
-                    .text("cutoff R"),
-            );
+            if new_values != **self.values.load() {
+                self.values.store(Arc::new(new_values));
+            }
 
-            ui.add(
-                egui::Slider::new(&mut self.values.lock().unwrap()[7], 0.001..=10.0)
-                    .text("volume A"),
-            );
-            ui.add(
-                egui::Slider::new(&mut self.values.lock().unwrap()[8], 0.001..=10.0)
-                    .text("volume D"),
-            );
-            ui.add(
-                egui::Slider::new(&mut self.values.lock().unwrap()[9], 0.001..=1.0)
-                    .text("volume S"),
-            );
-            ui.add(
-                egui::Slider::new(&mut self.values.lock().unwrap()[10], 0.001..=10.0)
-                    .text("volume R"),
-            );
+            let mut new_toggles = (**self.toggles.load()).clone();
+            ui.add(egui::Checkbox::new(&mut new_toggles[0], "chorus"));
+            ui.add(egui::Checkbox::new(&mut new_toggles[1], "delay"));
 
-            ui.add(
-                egui::Slider::new(&mut self.values.lock().unwrap()[11], 0.0..=1.0)
-                    .text("Distortion"),
-            );
-            ui.add(
-                egui::Slider::new(&mut self.values.lock().unwrap()[12], 0.0..=1.0).text("Chorus"),
-            );
-            ui.add(
-                egui::Slider::new(&mut self.values.lock().unwrap()[13], 0.0..=1.0).text("Delay"),
-            );
-            ui.add(
-                egui::Slider::new(&mut self.values.lock().unwrap()[14], 0.0..=5.0)
-                    .text("Delay time"),
-            );
-            ui.add(
-                egui::Slider::new(&mut self.values.lock().unwrap()[15], 0.0..=1.0)
-                    .text("Delay feedback"),
-            );
-            ui.add(egui::Checkbox::new(
-                &mut self.toggles.lock().unwrap()[0],
-                "chorus",
-            ));
-            ui.add(egui::Checkbox::new(
-                &mut self.toggles.lock().unwrap()[1],
-                "delay",
-            ));
+            if new_toggles != **self.toggles.load() {
+                self.toggles.store(Arc::new(new_toggles));
+            }
+
             if ui.button("save").clicked() {
                 let mut values: Vec<f32> = vec![];
-                for value in self.values.clone().lock().unwrap().iter_mut() {
+                for value in self.values.load().iter() {
                     values.push(*value);
                 }
                 let _ = write_json(values);
@@ -204,7 +139,7 @@ impl eframe::App for Content {
     }
 }
 
-fn run(sounds: Sounds) -> Result<(), Box<dyn Error>> {
+fn run(sender: Sender<(u8, u8, u8)>) -> Result<(), Box<dyn Error>> {
     let mut input = String::new();
 
     let mut midi_in = MidiInput::new("midir reading input")?;
@@ -245,17 +180,9 @@ fn run(sounds: Sounds) -> Result<(), Box<dyn Error>> {
         "midir-read-input",
         move |stamp, message, _| {
             println!("{}: {:?} (len = {})", stamp, message, message.len());
-            println!("{:?}", message[1]);
-            if (message[2] == 127) {
-                play_note(
-                    sounds.envelopes.clone(),
-                    sounds.sources.clone(),
-                    sounds.values.clone(),
-                    message[1],
-                );
-            }
-            if (message[2] == 0) {
-                stop_playing(sounds.envelopes.clone(), message[1]);
+            match sender.send((message[1], message[2], message[0])) {
+                Err(_error) => {}
+                Ok(_result) => {}
             }
         },
         (),
@@ -278,16 +205,13 @@ fn write_json(data: Vec<f32>) -> Result<(), io::Error> {
     let path = "saved.json";
     let mut output = File::create(path)?;
     write!(output, "{}", json)?;
-
     Ok(())
 }
 
-fn load_json(values: Arc<Mutex<Vec<f32>>>) -> Result<(), io::Error> {
-    let json = fs::read_to_string("saved.json").expect("file should be able to be read");
+fn load_json(values: Arc<ArcSwap<Vec<f32>>>) -> Result<(), io::Error> {
+    let json = fs::read_to_string("saved.json")?;
     let data: Vec<f32> = serde_json::from_str(&json)?;
     println!("{:?}", data);
-    for i in 0..=data.len() - 1 {
-        values.lock().unwrap()[i] = data[i];
-    }
+    values.store(Arc::new(data));
     Ok(())
 }

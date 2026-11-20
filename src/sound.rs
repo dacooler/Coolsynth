@@ -10,8 +10,10 @@ use crate::sound::effector::modulator::{Dynamic, Slew};
 use crate::sound::effector::{Delay, Effector, LpFilter, modulator::LFO};
 use crate::sound::effector::{Distortion, Feedback, Mixer, Stereo, Toggle};
 use crate::sound::oscillator::{Oscillator, SawOscillator, Unison};
+use arc_swap::ArcSwap;
+use std::sync::mpsc::Receiver;
 
-impl rodio::source::Source for MasterAudioIterator {
+impl rodio::source::Source for MasterAudio {
     fn current_span_len(&self) -> Option<usize> {
         None
     }
@@ -51,10 +53,11 @@ pub struct AudioGenerator {
 }
 
 pub struct MasterAudio {
-    pub sources: Arc<Mutex<Vec<AudioGenerator>>>,
-    pub envelopes: Arc<Mutex<IndexMap<u8, Arc<Mutex<Envelope>>>>>,
-    pub values: Arc<Mutex<Vec<f32>>>,
+    sources: Vec<AudioGenerator>,
+    values: Arc<ArcSwap<Vec<f32>>>,
+    recv: Receiver<(u8, u8, u8)>,
     effector: Vec<Box<dyn Effector>>,
+    envelopes: IndexMap<u8, Arc<Mutex<Envelope>>>,
     time: f64,
     cur_sample: Audio,
     done: bool,
@@ -62,11 +65,12 @@ pub struct MasterAudio {
 
 impl MasterAudio {
     pub fn new(
-        values: Arc<Mutex<Vec<f32>>>,
-        toggles: Arc<Mutex<Vec<bool>>>,
-        sources: Arc<Mutex<Vec<AudioGenerator>>>,
-        envelopes: Arc<Mutex<IndexMap<u8, Arc<Mutex<Envelope>>>>>,
+        values: Arc<ArcSwap<Vec<f32>>>,
+        toggles: Arc<ArcSwap<Vec<bool>>>,
+        recv: Receiver<(u8, u8, u8)>,
     ) -> Self {
+        let envelopes = IndexMap::new();
+        let sources = Vec::new();
         let delay = Toggle::new(
             toggles.clone(),
             1,
@@ -138,22 +142,93 @@ impl MasterAudio {
             cur_sample: Audio::new_m(0.0),
             done: true,
             envelopes: envelopes,
-            values: values.clone(),
+            values: values,
+            recv: recv,
         }
     }
 
+    fn set_values(&mut self) {
+        match self.recv.try_recv() {
+            Ok(event) => {
+                if event.2 == 144 {
+                    self.play_note(event.0);
+                }
+                if event.2 == 128 {
+                    self.stop_playing(event.0);
+                }
+            }
+            Err(_error) => {}
+        }
+    }
+
+    pub fn play_note(&mut self, note: u8) {
+        // _stream must live as long as the sink
+        let envelope = Envelope::new_ub(
+            Dynamic::new(self.values.clone(), 7),
+            Dynamic::new(self.values.clone(), 8),
+            Dynamic::new(self.values.clone(), 9),
+            Dynamic::new(self.values.clone(), 10),
+        );
+
+        let envelope = Arc::new(Mutex::new(envelope));
+
+        //let source = AudioGenerator { time: 0., oscillator: Box::new(SawOscillator::new(frequency)), envelope:envelope.clone(), effector: Box::new(HpFilter::new(Box::new(Static::new(0.)), None))};
+        //
+        let frequency = freq_from_note(note);
+
+        let source = AudioGenerator {
+            time: 0.,
+            oscillator: Unison::new(vec![SawOscillator::new(frequency)]),
+            effector: vec![Box::new(LpFilter::new(
+                Attenuator::new(
+                    Envelope::new(
+                        Dynamic::new(self.values.clone(), 3),
+                        Dynamic::new(self.values.clone(), 4),
+                        Dynamic::new(self.values.clone(), 5),
+                        Dynamic::new(self.values.clone(), 6),
+                    ),
+                    Dynamic::new(self.values.clone(), 2),
+                    Dynamic::new(self.values.clone(), 0),
+                ),
+                Dynamic::new(self.values.clone(), 1),
+                None,
+            ))],
+            envelope: envelope.clone(),
+        };
+
+        self.sources.push(source);
+        self.envelopes.insert(note, envelope);
+        return;
+    }
+    pub fn stop_playing(&mut self, note: u8) {
+        match self.envelopes.get(&note) {
+            Some(envelope) => {
+                envelope.lock().unwrap().sustained = false;
+            }
+            None => {}
+        }
+    }
+}
+fn freq_from_note(note: u8) -> f64 {
+    let base: f64 = 2.;
+    return 440. * base.powf((note as f64 - 69.) / 12.);
+}
+
+impl Iterator for MasterAudio {
+    type Item = Float;
     fn next(&mut self) -> Option<f32> {
+        self.set_values();
         if self.done {
             self.cur_sample = Audio::new_m(0.0);
             self.time += 1. / 44100.0;
-            self.sources.lock().unwrap().retain(|x| {
+            self.sources.retain(|x| {
                 x.envelope
                     .lock()
                     .unwrap()
                     .get_mod(x.time + 1. / 44100.0)
                     .is_some()
             });
-            for source in self.sources.lock().unwrap().iter_mut() {
+            for source in self.sources.iter_mut() {
                 match source.next() {
                     None => {}
                     Some(value) => self.cur_sample = self.cur_sample + value,
@@ -167,75 +242,6 @@ impl MasterAudio {
         }
         self.done = true;
         return Some(self.cur_sample.right as f32);
-    }
-}
-pub fn play_note(
-    envelopes: Arc<Mutex<IndexMap<u8, Arc<Mutex<Envelope>>>>>,
-    sources: Arc<Mutex<Vec<AudioGenerator>>>,
-    values: Arc<Mutex<Vec<f32>>>,
-    note: u8,
-) {
-    // _stream must live as long as the sink
-    let envelope = Envelope::new_ub(
-        Dynamic::new(values.clone(), 7),
-        Dynamic::new(values.clone(), 8),
-        Dynamic::new(values.clone(), 9),
-        Dynamic::new(values.clone(), 10),
-    );
-
-    let envelope = Arc::new(Mutex::new(envelope));
-
-    //let source = AudioGenerator { time: 0., oscillator: Box::new(SawOscillator::new(frequency)), envelope:envelope.clone(), effector: Box::new(HpFilter::new(Box::new(Static::new(0.)), None))};
-    //
-    let frequency = freq_from_note(note);
-
-    let source = AudioGenerator {
-        time: 0.,
-        oscillator: Unison::new(vec![
-            SawOscillator::new(frequency),
-            SawOscillator::new(frequency + 10.),
-        ]),
-        effector: vec![Box::new(LpFilter::new(
-            Attenuator::new(
-                Envelope::new(
-                    Dynamic::new(values.clone(), 3),
-                    Dynamic::new(values.clone(), 4),
-                    Dynamic::new(values.clone(), 5),
-                    Dynamic::new(values.clone(), 6),
-                ),
-                Dynamic::new(values.clone(), 2),
-                Dynamic::new(values.clone(), 0),
-            ),
-            Dynamic::new(values.clone(), 1),
-            None,
-        ))],
-        envelope: envelope.clone(),
-    };
-
-    sources.lock().unwrap().push(source);
-    envelopes.lock().unwrap().insert(note, envelope);
-}
-pub fn stop_playing(envelopes: Arc<Mutex<IndexMap<u8, Arc<Mutex<Envelope>>>>>, note: u8) {
-    match envelopes.lock().unwrap().get(&note) {
-        Some(envelope) => {
-            envelope.lock().unwrap().sustained = false;
-        }
-        None => {}
-    }
-}
-
-fn freq_from_note(note: u8) -> f64 {
-    return 2. * (note - 12) as f64 / 12. * 440.;
-}
-
-pub struct MasterAudioIterator {
-    pub master_audio: MasterAudio,
-}
-
-impl Iterator for MasterAudioIterator {
-    type Item = Float;
-    fn next(&mut self) -> Option<Self::Item> {
-        self.master_audio.next()
     }
 }
 
