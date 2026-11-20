@@ -9,39 +9,57 @@ use std::{
     sync::{Arc, LazyLock, Mutex},
 };
 
+use indexmap::IndexMap;
+
 use eframe::{egui, wgpu::naga::compact::KeepUnused::No};
 use egui::{Key, ScrollArea};
 mod sound;
 use midir::{Ignore, MidiInput};
 use rodio::{MixerDeviceSink, Player, mixer::Mixer};
 use serde_json::Value;
-use sound::{MasterAudio, MasterAudioIterator};
+use sound::{MasterAudio, MasterAudioIterator, play_note, stop_playing};
 use std::thread;
 
 use crate::sound::{AudioGenerator, Envelope, SynthValues};
+
+struct Sounds {
+    pub envelopes: Arc<Mutex<IndexMap<u8, Arc<Mutex<Envelope>>>>>,
+    pub sources: Arc<Mutex<Vec<AudioGenerator>>>,
+    pub values: Arc<Mutex<Vec<f32>>>,
+}
 
 fn main() -> eframe::Result {
     let values = Arc::new(Mutex::new(vec![
         10000.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
     ]));
     let toggles = Arc::new(Mutex::new(vec![false, false, false]));
-    let master_audio = Arc::new(Mutex::new(MasterAudio::new(
+    let sources = Arc::new(Mutex::new(Vec::new()));
+    let envelopes = Arc::new(Mutex::new(IndexMap::new()));
+    let master_audio = MasterAudio::new(
         values.clone(),
         toggles.clone(),
-    )));
+        sources.clone(),
+        envelopes.clone(),
+    );
+
+    let sounds = Sounds {
+        envelopes: envelopes.clone(),
+        sources: sources.clone(),
+        values: values.clone(),
+    };
 
     let options = eframe::NativeOptions::default();
     let handle = rodio::DeviceSinkBuilder::open_default_sink().expect("open default audio stream");
-    let sources = master_audio.clone().lock().unwrap().sources.clone();
 
     handle.mixer().add(MasterAudioIterator {
-        master_audio: master_audio.clone(),
+        master_audio: master_audio,
     });
 
-    thread::spawn(move || match run(master_audio.clone()) {
+    thread::spawn(move || match run(sounds) {
         Ok(_) => (),
         Err(err) => println!("Error: {}", err),
     });
+
     eframe::run_native(
         "Keyboard events",
         options,
@@ -50,7 +68,6 @@ fn main() -> eframe::Result {
                 text: "".to_string(),
                 values: values.clone(),
                 toggles: toggles.clone(),
-                sources: sources,
                 id_counter: 1,
             }))
         }),
@@ -59,7 +76,6 @@ fn main() -> eframe::Result {
 
 struct Content {
     text: String,
-    sources: Arc<Mutex<Vec<AudioGenerator>>>,
     values: Arc<Mutex<Vec<f32>>>,
     toggles: Arc<Mutex<Vec<bool>>>,
     id_counter: i32,
@@ -188,7 +204,7 @@ impl eframe::App for Content {
     }
 }
 
-fn run(master_audio: Arc<Mutex<MasterAudio>>) -> Result<(), Box<dyn Error>> {
+fn run(sounds: Sounds) -> Result<(), Box<dyn Error>> {
     let mut input = String::new();
 
     let mut midi_in = MidiInput::new("midir reading input")?;
@@ -231,10 +247,15 @@ fn run(master_audio: Arc<Mutex<MasterAudio>>) -> Result<(), Box<dyn Error>> {
             println!("{}: {:?} (len = {})", stamp, message, message.len());
             println!("{:?}", message[1]);
             if (message[2] == 127) {
-                master_audio.lock().unwrap().play_note(message[1]);
+                play_note(
+                    sounds.envelopes.clone(),
+                    sounds.sources.clone(),
+                    sounds.values.clone(),
+                    message[1],
+                );
             }
             if (message[2] == 0) {
-                master_audio.lock().unwrap().stop_playing(message[1]);
+                stop_playing(sounds.envelopes.clone(), message[1]);
             }
         },
         (),

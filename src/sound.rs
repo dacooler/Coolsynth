@@ -52,16 +52,21 @@ pub struct AudioGenerator {
 
 pub struct MasterAudio {
     pub sources: Arc<Mutex<Vec<AudioGenerator>>>,
+    pub envelopes: Arc<Mutex<IndexMap<u8, Arc<Mutex<Envelope>>>>>,
+    pub values: Arc<Mutex<Vec<f32>>>,
     effector: Vec<Box<dyn Effector>>,
     time: f64,
     cur_sample: Audio,
-    envelopes: Arc<Mutex<IndexMap<u8, Arc<Mutex<Envelope>>>>>,
     done: bool,
-    values: Arc<Mutex<Vec<f32>>>,
 }
 
 impl MasterAudio {
-    pub fn new(values: Arc<Mutex<Vec<f32>>>, toggles: Arc<Mutex<Vec<bool>>>) -> Self {
+    pub fn new(
+        values: Arc<Mutex<Vec<f32>>>,
+        toggles: Arc<Mutex<Vec<bool>>>,
+        sources: Arc<Mutex<Vec<AudioGenerator>>>,
+        envelopes: Arc<Mutex<IndexMap<u8, Arc<Mutex<Envelope>>>>>,
+    ) -> Self {
         let delay = Toggle::new(
             toggles.clone(),
             1,
@@ -127,63 +132,13 @@ impl MasterAudio {
         );
         let distortion = Mixer::new(Distortion::new(), Dynamic::new(values.clone(), 11));
         Self {
-            sources: Arc::new(Mutex::new(Vec::new())),
+            sources: sources,
             effector: vec![distortion, chorus, chorus2, delay],
             time: 0.0,
             cur_sample: Audio::new_m(0.0),
             done: true,
-            envelopes: Arc::new(Mutex::new(IndexMap::new())),
+            envelopes: envelopes,
             values: values.clone(),
-        }
-    }
-
-    pub fn play_note(&self, note: u8) {
-        // _stream must live as long as the sink
-        let envelope = Envelope::new_ub(
-            Dynamic::new(self.values.clone(), 7),
-            Dynamic::new(self.values.clone(), 8),
-            Dynamic::new(self.values.clone(), 9),
-            Dynamic::new(self.values.clone(), 10),
-        );
-
-        let envelope = Arc::new(Mutex::new(envelope));
-
-        //let source = AudioGenerator { time: 0., oscillator: Box::new(SawOscillator::new(frequency)), envelope:envelope.clone(), effector: Box::new(HpFilter::new(Box::new(Static::new(0.)), None))};
-        //
-        let frequency = freq_from_note(note);
-
-        let source = AudioGenerator {
-            time: 0.,
-            oscillator: Unison::new(vec![
-                SawOscillator::new(frequency),
-                SawOscillator::new(frequency + 10.),
-            ]),
-            effector: vec![Box::new(LpFilter::new(
-                Attenuator::new(
-                    Envelope::new(
-                        Dynamic::new(self.values.clone(), 3),
-                        Dynamic::new(self.values.clone(), 4),
-                        Dynamic::new(self.values.clone(), 5),
-                        Dynamic::new(self.values.clone(), 6),
-                    ),
-                    Dynamic::new(self.values.clone(), 2),
-                    Dynamic::new(self.values.clone(), 0),
-                ),
-                Dynamic::new(self.values.clone(), 1),
-                None,
-            ))],
-            envelope: envelope.clone(),
-        };
-
-        self.sources.lock().unwrap().push(source);
-        self.envelopes.lock().unwrap().insert(note, envelope);
-    }
-    pub fn stop_playing(&self, note: u8) {
-        match self.envelopes.lock().unwrap().get(&note) {
-            Some(envelope) => {
-                envelope.lock().unwrap().sustained = false;
-            }
-            None => {}
         }
     }
 
@@ -214,19 +169,73 @@ impl MasterAudio {
         return Some(self.cur_sample.right as f32);
     }
 }
+pub fn play_note(
+    envelopes: Arc<Mutex<IndexMap<u8, Arc<Mutex<Envelope>>>>>,
+    sources: Arc<Mutex<Vec<AudioGenerator>>>,
+    values: Arc<Mutex<Vec<f32>>>,
+    note: u8,
+) {
+    // _stream must live as long as the sink
+    let envelope = Envelope::new_ub(
+        Dynamic::new(values.clone(), 7),
+        Dynamic::new(values.clone(), 8),
+        Dynamic::new(values.clone(), 9),
+        Dynamic::new(values.clone(), 10),
+    );
+
+    let envelope = Arc::new(Mutex::new(envelope));
+
+    //let source = AudioGenerator { time: 0., oscillator: Box::new(SawOscillator::new(frequency)), envelope:envelope.clone(), effector: Box::new(HpFilter::new(Box::new(Static::new(0.)), None))};
+    //
+    let frequency = freq_from_note(note);
+
+    let source = AudioGenerator {
+        time: 0.,
+        oscillator: Unison::new(vec![
+            SawOscillator::new(frequency),
+            SawOscillator::new(frequency + 10.),
+        ]),
+        effector: vec![Box::new(LpFilter::new(
+            Attenuator::new(
+                Envelope::new(
+                    Dynamic::new(values.clone(), 3),
+                    Dynamic::new(values.clone(), 4),
+                    Dynamic::new(values.clone(), 5),
+                    Dynamic::new(values.clone(), 6),
+                ),
+                Dynamic::new(values.clone(), 2),
+                Dynamic::new(values.clone(), 0),
+            ),
+            Dynamic::new(values.clone(), 1),
+            None,
+        ))],
+        envelope: envelope.clone(),
+    };
+
+    sources.lock().unwrap().push(source);
+    envelopes.lock().unwrap().insert(note, envelope);
+}
+pub fn stop_playing(envelopes: Arc<Mutex<IndexMap<u8, Arc<Mutex<Envelope>>>>>, note: u8) {
+    match envelopes.lock().unwrap().get(&note) {
+        Some(envelope) => {
+            envelope.lock().unwrap().sustained = false;
+        }
+        None => {}
+    }
+}
 
 fn freq_from_note(note: u8) -> f64 {
     return 2. * (note - 12) as f64 / 12. * 440.;
 }
 
 pub struct MasterAudioIterator {
-    pub master_audio: Arc<Mutex<MasterAudio>>,
+    pub master_audio: MasterAudio,
 }
 
 impl Iterator for MasterAudioIterator {
     type Item = Float;
     fn next(&mut self) -> Option<Self::Item> {
-        self.master_audio.lock().unwrap().next()
+        self.master_audio.next()
     }
 }
 
