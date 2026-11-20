@@ -15,27 +15,33 @@ mod sound;
 use midir::{Ignore, MidiInput};
 use rodio::{MixerDeviceSink, Player, mixer::Mixer};
 use serde_json::Value;
-use sound::{MasterAudio, play_note};
+use sound::{MasterAudio, MasterAudioIterator};
+use std::thread;
 
 use crate::sound::{AudioGenerator, Envelope, SynthValues};
 
 fn main() -> eframe::Result {
-    env_logger::init();
-    match run() {
-        Ok(_) => (),
-        Err(err) => println!("Error: {}", err),
-    }
-
-    let options = eframe::NativeOptions::default();
-    let handle = rodio::DeviceSinkBuilder::open_default_sink().expect("open default audio stream");
     let values = Arc::new(Mutex::new(vec![
         10000.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
     ]));
     let toggles = Arc::new(Mutex::new(vec![false, false, false]));
-    let master_audio = MasterAudio::new(values.clone(), toggles.clone());
-    let sources = master_audio.sources.clone();
+    let master_audio = Arc::new(Mutex::new(MasterAudio::new(
+        values.clone(),
+        toggles.clone(),
+    )));
 
-    handle.mixer().add(master_audio);
+    let options = eframe::NativeOptions::default();
+    let handle = rodio::DeviceSinkBuilder::open_default_sink().expect("open default audio stream");
+    let sources = master_audio.clone().lock().unwrap().sources.clone();
+
+    handle.mixer().add(MasterAudioIterator {
+        master_audio: master_audio.clone(),
+    });
+
+    thread::spawn(move || match run(master_audio.clone()) {
+        Ok(_) => (),
+        Err(err) => println!("Error: {}", err),
+    });
     eframe::run_native(
         "Keyboard events",
         options,
@@ -45,77 +51,18 @@ fn main() -> eframe::Result {
                 values: values.clone(),
                 toggles: toggles.clone(),
                 sources: sources,
-                envelopes: vec![
-                    None, None, None, None, None, None, None, None, None, None, None,
-                ],
+                id_counter: 1,
             }))
         }),
     )
 }
 
-fn run() -> Result<(), Box<dyn Error>> {
-    let mut input = String::new();
-
-    let mut midi_in = MidiInput::new("midir reading input")?;
-    midi_in.ignore(Ignore::None);
-
-    // Get an input port (read from console if multiple are available)
-    let in_ports = midi_in.ports();
-    let in_port = match in_ports.len() {
-        0 => return Err("no input port found".into()),
-        1 => {
-            println!(
-                "Choosing the only available input port: {}",
-                midi_in.port_name(&in_ports[0]).unwrap()
-            );
-            &in_ports[0]
-        }
-        _ => {
-            println!("\nAvailable input ports:");
-            for (i, p) in in_ports.iter().enumerate() {
-                println!("{}: {}", i, midi_in.port_name(p).unwrap());
-            }
-            print!("Please select input port: ");
-            stdout().flush()?;
-            let mut input = String::new();
-            stdin().read_line(&mut input)?;
-            in_ports
-                .get(input.trim().parse::<usize>()?)
-                .ok_or("invalid input port selected")?
-        }
-    };
-
-    println!("\nOpening connection");
-    let in_port_name = midi_in.port_name(in_port)?;
-
-    // _conn_in needs to be a named parameter, because it needs to be kept alive until the end of the scope
-    let _conn_in = midi_in.connect(
-        in_port,
-        "midir-read-input",
-        move |stamp, message, _| {
-            println!("{}: {:?} (len = {})", stamp, message, message.len());
-        },
-        (),
-    )?;
-
-    println!(
-        "Connection open, reading input from '{}' (press enter to exit) ...",
-        in_port_name
-    );
-
-    input.clear();
-    stdin().read_line(&mut input)?; // wait for next enter key press
-
-    println!("Closing connection");
-    Ok(())
-}
-
 struct Content {
     text: String,
     sources: Arc<Mutex<Vec<AudioGenerator>>>,
-    envelopes: Vec<Option<Arc<Mutex<Envelope>>>>,
     values: Arc<Mutex<Vec<f32>>>,
     toggles: Arc<Mutex<Vec<bool>>>,
+    id_counter: i32,
 }
 static SYNTH_VALUES: LazyLock<SynthValues> = LazyLock::new(|| SynthValues::new(0.0, 0.0));
 
@@ -223,12 +170,11 @@ impl eframe::App for Content {
                 ("K", 880.0),
                 ("L", 987.76),
             ];
+            /*
             for (index, (key, freq)) in keys.iter().enumerate() {
                 if ui.input(|i| i.key_pressed(Key::from_name(key).unwrap())) {
-                    if self.envelopes[index].is_none() {
-                        self.envelopes[index] =
-                            Some(play_note(self.sources.clone(), *freq, self.values.clone()));
-                    }
+                    self.id_counter++;
+                    play_note(*freq, self.values.clone(), self.id_counter);
                 }
                 if ui.input(|i| i.key_released(Key::from_name(key).unwrap()))
                     && let Some(envelope) = &self.envelopes[index]
@@ -237,8 +183,73 @@ impl eframe::App for Content {
                     self.envelopes[index] = None;
                 }
             }
+            */
         });
     }
+}
+
+fn run(master_audio: Arc<Mutex<MasterAudio>>) -> Result<(), Box<dyn Error>> {
+    let mut input = String::new();
+
+    let mut midi_in = MidiInput::new("midir reading input")?;
+    midi_in.ignore(Ignore::None);
+
+    // Get an input port (read from console if multiple are available)
+    let in_ports = midi_in.ports();
+    let in_port = match in_ports.len() {
+        0 => return Err("no input port found".into()),
+        1 => {
+            println!(
+                "Choosing the only available input port: {}",
+                midi_in.port_name(&in_ports[0]).unwrap()
+            );
+            &in_ports[0]
+        }
+        _ => {
+            println!("\nAvailable input ports:");
+            for (i, p) in in_ports.iter().enumerate() {
+                println!("{}: {}", i, midi_in.port_name(p).unwrap());
+            }
+            print!("Please select input port: ");
+            stdout().flush()?;
+            let mut input = String::new();
+            stdin().read_line(&mut input)?;
+            in_ports
+                .get(input.trim().parse::<usize>()?)
+                .ok_or("invalid input port selected")?
+        }
+    };
+
+    println!("\nOpening connection");
+    let in_port_name = midi_in.port_name(in_port)?;
+
+    // _conn_in needs to be a named parameter, because it needs to be kept alive until the end of the scope
+    let _conn_in = midi_in.connect(
+        in_port,
+        "midir-read-input",
+        move |stamp, message, _| {
+            println!("{}: {:?} (len = {})", stamp, message, message.len());
+            println!("{:?}", message[1]);
+            if (message[2] == 127) {
+                master_audio.lock().unwrap().play_note(message[1]);
+            }
+            if (message[2] == 0) {
+                master_audio.lock().unwrap().stop_playing(message[1]);
+            }
+        },
+        (),
+    )?;
+
+    println!(
+        "Connection open, reading input from '{}' (press enter to exit) ...",
+        in_port_name
+    );
+
+    input.clear();
+    stdin().read_line(&mut input)?; // wait for next enter key press
+
+    println!("Closing connection");
+    Ok(())
 }
 
 fn write_json(data: Vec<f32>) -> Result<(), io::Error> {
